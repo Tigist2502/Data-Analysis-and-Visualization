@@ -1,6 +1,6 @@
 ---
 title: "Analysis of Crime and Temperature Data in Colchester for 2024"
-author: "Tigist Ayele Habte"
+author: "Tigist"
 date: "`r Sys.Date()`"
 output:
   html_document:
