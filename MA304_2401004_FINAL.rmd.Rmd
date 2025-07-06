@@ -1,0 +1,575 @@
+---
+title: "Analysis of Crime and Temperature Data in Colchester for 2024"
+author: "Tigist Ayele Habte"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    number_sections: yes
+    theme: cerulean
+    highlight: kate
+    toc: yes
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+  pdf_document:
+    toc: yes
+  word_document:
+    toc: yes
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Introduction
+
+The purpose of this report is to analyze and interpret crime and temperature data collected from Colchester city in 2024. This analysis will help identify patterns and correlations between crime incidents and climatic conditions in the area. The datasets utilized in this analysis are
+
+*    crime24.csv This file contains street-level crime data from Colchester for the year 2024. It was extracted using the interface described at UK Police Crime Data. The dataset includes information such as the category of crime, location details, date, and outcome status.
+
+*    temp24.csv This file contains daily climate data recorded at a weather station near Colchester in 2024. The data was retrieved using the interface outlined at Ogimet Climate Data. It includes variables such as temperature, humidity, and other meteorological factors.
+
+This report will cover the data cleaning process, exploratory data analysis, data visualization, and interpretation of the findings.
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)   # For data manipulation and visualization 
+library(ggplot2)     # For creating advanced plots and visualizations
+library(naniar)      # For handling and visualizing missing data
+library(gtExtras)    # For adding enhancements to 'gt' tables
+library(gt)          # For creating presentation-quality tables
+library(readr)       # For reading and writing data efficiently
+library(dplyr)       # For data manipulation (filter, mutate, summarize, etc.)
+library(lubridate)   # For working with dates and times
+library(plotly)      # For creating interactive plots
+library(ggmap)       # For visualizing spatial data on maps
+library(ggcorrplot)  # For Correlation matrix
+library(leaflet)     # For map
+library(ggforce)     # For advanced ggplot2 visualizations
+rm(list=ls())        # Clear the environment
+
+```
+
+# Data Cleaning and Preprocessing
+
+## Load and inspect the data
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+Crime_data <- read.csv('C:/Users/tigis_63ho3/OneDrive/Desktop/MA304_2401004/crime24.csv', sep = ',')
+temp_data <- read.csv('C:/Users/tigis_63ho3/OneDrive/Desktop/MA304_2401004/temp24.csv', sep = ',')
+
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+head(temp_data)     # Display the first six rows of the dataset 
+glimpse(temp_data)  # show the structure
+summary(temp_data)  # show the summary
+dim(temp_data)      # show the dimension
+ 
+head(Crime_data)    # Display the first six rows of the dataset 
+glimpse(Crime_data) # show the structure
+summary(Crime_data) # show the summary
+dim(Crime_data)     # show the dimension
+```
+
+## Data Description
+The crime dataset consists of 6,304 rows and 13 variables, while the temperature dataset contains 366 observations and 18 features. In both datasets, the date variable is currently stored in the character format (chr). Therefore, it is necessary to convert this variable to a date-time format to ensure proper handling and analysis
+
+## Check and Handle missing values
+### Crime data
+The variables "Context" and "Location Subtype" in the crime data exhibit extremely high missingness, suggesting that they might not be informative and could potentially be excluded from further analysis. The variables "Persistent ID" and "Outcome Status" have moderate missingness, requiring appropriate handling, such as imputation. The remaining variables ("Category", "Date", "Lat", and "Long") have no missing values and can be utilized directly in the analysis. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+Crime_data[] <- lapply(Crime_data, function(x) {
+  x[trimws(x) == ""] <- NA  # Replace blank or empty strings with NA
+  return(x)
+})
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+miss_var_summary(Crime_data[,2:13])%>%
+  gt()%>%
+  gt_theme_guardian()%>%
+  tab_header(title= 'Missingness of the variables')
+```
+
+Variables with a substantial proportion of missing values were excluded from the analysis. However, for the remaining two variables, missing values were imputed using the labels 'Unknown' and 'Missing' in order to preserve the informational content of these columns.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+Crime_data <- Crime_data %>% select(-location_subtype, -context)
+Crime_data$outcome_status[is.na(Crime_data$outcome_status)] <- "Unknown"
+Crime_data$persistent_id[is.na(Crime_data$persistent_id)] <- "Missing"
+```
+
+### Temprature data
+
+The variables "PreselevHp" and "SnowDepcm" exhibit extremely high levels of missingness (100 percent and 99.5 percent, respectively), suggesting they may not be useful for analysis and might be excluded from the dataset.The "Precmm" and "lowClOct" variables have low to moderate missingness, which can be addressed through appropriate imputation methods.
+The rest variables "station_ID", "Date", "TemperatureCAvg", and "TemperatureCMax" are fully complete, allowing for direct utilization in analysis.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+temp_data[] <- lapply(temp_data, function(x) {
+  x[trimws(x) == ""] <- NA  # Replace blank or empty strings with NA
+  return(x)
+})
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+miss_var <-miss_var_summary(temp_data)%>%
+  gt()%>%
+  gt_theme_guardian()%>%
+  tab_header(title= 'Missingness of the variables')
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+#visualize the distribution of missing values
+vis_miss(temp_data)
+```
+
+Consistent with the approach taken for the crime data, variables exhibiting a high percentage of missing values were excluded to maintain data quality and analytical accuracy. For the remaining variables, imputation was performed using the mean value, thereby preserving the dataset's integrity while minimizing the impact of missing data.
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Drop 'PreselevHp' and 'SnowDepcm' columns from crime data
+temp_data <- temp_data %>% select(-PreselevHp, -SnowDepcm, -station_ID)
+
+temp_data$Precmm[is.na(temp_data$Precmm)] <- mean(temp_data$Precmm, na.rm = TRUE)
+temp_data$lowClOct[is.na(temp_data$lowClOct)] <- mean(temp_data$lowClOct, na.rm = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#check for duplicated rows
+duplicated_crime <- Crime_data[duplicated(Crime_data), ]
+duplicated_temp <- temp_data[duplicated(temp_data), ]
+
+```
+
+
+After individually cleaning each dataset, which involved identifying and addressing missing values, removing duplicate rows, and converting variables to their correct formats, the datasets were merged based on their common variable, 'Date.' However, since the Crime dataset only contained information at the year and month level, I decided to extract the month component from both datasets and merge them based on this extracted month. This integration step was performed to consolidate the cleaned data into a unified dataset, enabling more comprehensive analysis while ensuring the proper alignment of temporal data across both datasets.
+```{r message=FALSE, warning=FALSE, include=FALSE}
+temp_data$date <- ymd(temp_data$Date)
+Crime_data$date <- ym(Crime_data$date)
+
+# Extract year and month in "%Y-%m" format
+Crime_data$month_year <- format(Crime_data$date, "%Y-%m")
+temp_data$month_year <- format(temp_data$date, "%Y-%m")
+
+# Extract month as an integer 
+Crime_data$month <- month(Crime_data$date)
+temp_data$month <- month(temp_data$date)
+
+#Drop the first date month_year variables
+temp_data <- temp_data %>% select(-Date,-date,-month_year)
+Crime_data <- Crime_data %>% select(-date,-month_year)
+
+```
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+merged_data <- merge(Crime_data, temp_data, by = "month", all.x = TRUE) #left joint
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Count the number of missing values 
+sum(is.na(merged_data))
+```
+
+# Data Analysis and interpretation
+
+## Crime Incidents by Location and Outcome Status
+
+This graph visualizes the spatial distribution of various crime categories based on latitude and longitude. Each subplot represents a specific crime type, with colored dots indicating the outcome status of incidents.
+Most crime incidents are concentrated within specific latitude and longitude ranges, forming clusters. This suggests that certain areas experience higher crime rates, likely due to population density or activity hubs. A noticeable concentration of incidents occurs around the central region of the map (approximately 51.890–51.900 latitude and 0.90–0.91 longitude). This area likely represents a hotspot for criminal activity across multiple categories.
+
+Anti-Social Behaviour has a dense cluster of incidents concentrated in a specific area, particularly between latitudes 51.885–51.895 and longitudes 0.89–0.91. The clustering suggests that anti-social behavior is prevalent in certain neighborhoods or public spaces.
+
+Bicycle Theft are more scattered compared to anti-social behavior but still show clustering near the central region. This spatial distribution may indicate theft hotspots near areas with high bicycle usage, such as transportation hubs or residential areas.
+
+Burglary and Criminal Damage/Arson Both categories show dispersed clusters across the map, with concentrations near the central latitude-longitude region. These crimes may be associated with residential or commercial zones.
+
+Violent crime incidents are heavily clustered in one primary area, spanning latitudes 51.880–51.900 and longitudes 0.89–0.91. This concentration could indicate specific neighborhoods for interpersonal violence.
+```{r message=FALSE, warning=FALSE}
+g <- ggplot(Crime_data, aes(x = long, y = lat, color = outcome_status)) +
+  geom_point(alpha = 0.6) +
+  facet_wrap(~ category) +
+  labs(title = "Crime Incidents by Location and Outcome Status",
+       x = "Longitude", y = "Latitude") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 8, vjust = 1)) 
+
+# Remove the legend for color
+g <- g + guides(color = FALSE)
+
+# Convert to interactive plot
+ggplotly(g, height = 400, width = 600)
+```
+
+## Streets with the Highest Crime Frequency
+
+This graph ranks the top 10 streets or locations based on crime frequency, with the count of incidents represented on the x-axis.
+
+The location with the highest number of crimes is "On or near Supermarket," followed closely by "On or near Shopping Area." These areas likely experience higher crime rates due to factors such as high foot traffic, ease of access, and opportunities for theft or anti-social behavior, which are common in locations with significant public activity.
+
+Other notable locations include "On or near Nightclub" and "On or near Police Station." The high crime frequency near nightclubs may be attributed to incidents related to nightlife, such as disturbances, violence, or alcohol-related offenses. In contrast, the proximity to a police station might suggest that certain crimes, while still occurring in these areas, are likely detected or reported more frequently due to their close proximity to law enforcement.
+
+Other streets, such as "On or near Culver Street West," "On or near St Nicholas Street," and "On or near Cowdray Avenue," show fewer incidents in comparison to supermarkets or shopping areas. However, these locations still rank within the top 10, suggesting that while their crime frequency is lower, they are still areas of concern for local law enforcement.
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+Crime_data %>%
+  count(street_name, sort = TRUE) %>%
+  head(10) %>%
+  ggplot(aes(x = reorder(street_name, n), y = n)) +
+  geom_bar(stat = "identity", fill = "Violet") +
+  coord_flip() +
+  labs(title = "Top 10 Streets by Crime Frequency")
+
+```
+
+## Proportion of Crime by location Types
+
+The graph demonstrates that crimes predominantly occur in areas overseen by local police forces ("Force"), while transport-related crimes managed by British Transport Police ("BTP") constitute only a small fraction. "Force," occupies almost the entire circle, indicating that the overwhelming majority of crimes occur in areas under the jurisdiction of local police forces.The count for "Force" is significantly higher, with approximately 6,000 incidents reported.
+The light purple section, representing "BTP," is a very thin slice of the circle, showing that only a small proportion of crimes occur in areas managed by British Transport Police. The count for "BTP" is negligible compared to "Force." Which means transport-related crime is relatively rare compared to crimes in broader community settings.
+
+```{r message=FALSE, warning=FALSE}
+Crime_data %>%
+  count(location_type) %>%
+  ggplot(aes(x = "", y = n, fill = location_type, text = paste("Location Type:", location_type, "<br>Count:", n))) + 
+  geom_bar(stat = "identity", width = 0.5) +
+  coord_polar("y") +
+  labs(title = "Proportion of Crime by Location Types") +
+  scale_fill_manual(values = c("#B19CD9", "#9966CC", "#4B0082", "#8A2BE2", "#4169E1", "#191970")) +
+  theme_minimal()
+
+```
+
+## Annual Crime Trends
+
+The line chart represents the monthly trend in crime counts over a year. The x axis shows the timeline for crime data and the Y axis indicates the total number of crimes recorded each month.The highest number of crimes occurs in July, with a noticeable spike in activity.This could be due to seasonal factors like summer, when people are more active outdoors.The lowest crime count is observed in April, followed by a gradual rise in subsequent months.Another decline is seen toward the end of the year, with December showing one of the lowest crime counts.
+
+```{r message=FALSE, warning=FALSE}
+
+ggplot(Crime_data, aes(x = month)) +
+  geom_line(stat = "count", color = "#0073C2FF", size = 1.2, linetype = "solid") +
+  geom_smooth(stat = "count", method = "loess", color = "red", se = FALSE, linetype = "dashed") +
+  labs(
+    title = "Crime Trend Over Time",
+    x = "Month",
+    y = "Crime Count"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+    axis.title.x = element_text(size = 16, face = "bold"),
+    axis.title.y = element_text(size = 16, face = "bold")
+    
+  )
+
+```
+
+The stacked area chart illustrates the monthly crime trends by category over a one-year period. Anti-social behavior and violent crime appear to be the most prevalent categories throughout the year, as they occupy the largest areas on the chart.There are visible peaks and troughs in crime counts across months,suggesting seasonal fluctuations.For instance A noticeable spike occurs around month 7(July).Crime counts dip around months 4((April) and 6(June).Some categories, such as drugs and possession of weapons, seem relatively stable compared to others.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+crime_by_month <- merged_data %>%
+  group_by(month, category) %>%
+  summarise(count = n())
+
+ggplot(crime_by_month, aes(x = month, y = count, fill = category)) +
+  geom_area() +
+  labs(title = "Monthly Crime Trends by Category", x = "Month", y = "crime Count")
+
+```
+
+## Analysis of Crime Outcome Statuses
+
+### How Do 2024 Crime Cases in Colchester End? 
+
+In 2024, a significant portion of crime investigations in Colchester concluded without identifying a suspect. Specifically, 32.2percent of all recorded cases were closed under the outcome "No Suspect Identified", making it the most common resolution status. This was followed by cases marked as "Unable to Prosecute Suspect", which also accounted for a notable share of the outcomes.
+
+These figures highlight potential challenges within the investigative or judicial processes—such as limited evidence, lack of witnesses, or procedural constraints—that may hinder the progression of cases. The high percentage of unresolved or unprosecuted incidents underscores the importance of resource allocation, public cooperation, and investigative effectiveness in improving crime resolution rates.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Prepare data
+outcome_data <- Crime_data %>%
+  group_by(outcome_status) %>%
+  summarise(count = n()) %>%
+  mutate(percent = round(count / sum(count) * 100, 1),
+         label = paste0(outcome_status, ": ", percent, "%"))
+
+# Create a chart
+plot_ly(
+  outcome_data,
+  labels = ~outcome_status,
+  values = ~count,
+  textinfo = 'percent',
+  hoverinfo = 'text',
+  text = ~label,
+  type = 'pie',
+  hole = 0.5
+) %>%
+  layout(
+    title = "Crime Outcome Status Distribution",
+    showlegend = TRUE,
+    margin = list(l = 20, r = 20, t = 50, b = 20)
+  )
+```
+
+
+### Crime category and their status
+
+The graph illustrates the distribution of crime categories and their corresponding outcome statuses, with the count of occurrences represented on the y-axis.
+
+Anti-Social Behaviour exhibits a high frequency of occurrences, with the all cases marked by an unknown status. This may be attributed to various factors, such as insufficient evidence, the absence of identifiable suspects, or potentially underreporting of incidents. These challenges contribute to the unresolved nature of these cases.
+
+Violent Crime stands out as the category with the highest overall count, approximately 2,400 cases. A prominent outcome in this category is Unable to prosecute suspect, indicating that a significant number of these cases are not progressing to prosecution. This trend reflects the inherent challenges of violent crime investigations, such as difficulties in identifying suspects, securing adequate evidence, and the complexity of the cases, which result in a large number of ongoing investigations and unresolved outcomes.
+
+For most crime categories in the city, the outcome is marked as Investigation complete, no suspect identified. This suggests that a substantial proportion of cases remain unresolved due to the inability to identify a suspect. The underlying reasons for these unresolved cases may include insufficient evidence, lack of eyewitnesses, or other obstacles that hinder the progression of investigations to a successful resolution.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Create the bar plot 
+status <- ggplot(Crime_data, aes(x = category, fill = outcome_status)) +
+  geom_bar() +
+  labs(title = "Crime Category vs Outcome Status") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 2))
+
+# Add the legend 
+status <- status + guides(fill = guide_legend(title = "Outcome Status"))
+
+# Convert to interactive plot using ggplotly
+ggplotly(status, height = 400, width = 900)
+
+```
+
+### Distribution of wind by outcome status
+
+The graph explores how wind gust speeds might be related to the different outcomes of cases. The width of the violin indicates the frequency of wind gust speeds. Wider sections mean more occurrences at those speeds. The shape provides insight into the data's density and range.
+An overall examination of wind gust speed distributions across crime outcome statuses reveals that most outcomes are concentrated between approximately 25 km/h and 50 km/h. The violin plots exhibit symmetrical distributions, with central bulges indicating a median wind gust speed within this range. This suggests that the majority of crime incidents—regardless of resolution—tend to occur under moderate wind conditions.
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+ggplot(merged_data, aes(x = outcome_status, y = WindkmhGust)) +
+  geom_violin(fill = "orchid", color = "black") +
+  labs(title = "Distribution of Wind Gusts by Outcome Status",
+       x = "Outcome Status",
+       y = "Wind Gust Speed (km/h)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+## Exploring Interdependencies in Weather Data
+
+The variables TemperatureCMax, TemperatureCAvg, and TemperatureCMin exhibit strong positive correlations with each other. This is expected, as maximum, average, and minimum temperatures are inherently related measures of the same climatic parameter. The consistency between these variables indicates that periods of higher maximum temperatures generally coincide with higher average and minimum temperatures, reflecting a uniform temperature trend.
+
+Similarly, WindkmhGust and WindkmhInt also demonstrate a strong positive correlation. This relationship suggests that increased wind gust speeds are typically accompanied by higher overall wind intensity, highlighting a close association between gustiness and sustained wind strength.
+
+The correlation matrix also reveals some lighter shades, indicating negative correlations (values closer to -1). For instance, Total cloudness (TotCLOct) appears to have a negative correlation with sunshine duration in hours(SunD1hrecm). This relationship is logical since heavy rainfall can significantly reduce visibility, resulting in an inverse relationship between the two variables
+
+
+```{r message=FALSE, warning=FALSE}
+# Select Numeric variables only
+numeric_data <- temp_data %>% select_if(is.numeric)
+
+# Compute the correlation matrix and p-values
+corr.mat <- round(cor(numeric_data), 0.5)
+pval.cor <- cor_pmat(numeric_data)
+
+G <- ggcorrplot(
+  corr.mat, 
+  hc.order = TRUE,          # Reorder using hierarchical clustering
+  type = "lower",           # Show lower triangle
+  outline.color = "white",  # Add a white outline for contrast
+  colors = c("#B19CD9", "#9966CC", "#4B0082", "#8A2BE2", "#4169E1", "#191970"),
+  title = "Correlation Matrix for weather data",
+  ggtheme = theme_minimal() 
+)
+
+# Make the plot interactive
+ggplotly(G, height = 500, width = 600)
+
+```
+
+## Relationship Between Cloud Cover and Sunshine Duration 
+
+This scatter plot visualizes the relationship between total cloud cover (on the X-axis) and sunshine duration (in hours) (on the Y-axis). A regression line with a shaded confidence interval is included to highlight the trend.The plot shows a clear negative correlation between total cloud cover and sunshine duration. As cloud cover increases, sunshine duration decreases.This is expected, as more clouds in the sky block sunlight, reducing the number of hours of sunshine. 
+The red line represents the best-fit regression model, showing the average relationship between cloud cover and sunshine duration.
+
+The shaded area around the line indicates the confidence interval, which reflects uncertainty in predictions. The interval widens slightly at higher cloud cover values, suggesting greater variability in sunshine duration when cloud cover is high
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Create the scatter plot with smoothing line and shadow effect
+ggplot(temp_data, aes(x = TotClOct, y = SunD1h)) +
+  geom_point(color = "blue", alpha = 0.6) +  # Scatter plot with blue points and slight transparency
+  geom_smooth(method = "loess", color = "red", linetype = "solid", se = TRUE, fill = "red", alpha = 0.2) +  # Smoothing line with shadow effect
+  labs(
+    title = "Cloud Cover and Sunshine Duration",
+    x = "Total Cloud Cover ",
+    y = "Sunshine Duration (1 Hour)"
+  ) +
+  theme_minimal() +  # Clean theme
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold")
+    
+  )
+```
+
+##  Distribution of Average Temperatures in Colchester (2024)
+
+The histogram presented illustrates the distribution of average temperatures (°C) recorded throughout the year 2024 in Colchester. The purpose of this visualization is to provide insights into the frequency and variability of average temperatures over the specified period.
+
+The distribution of temperatures appears approximately bell-shaped, closely resembling a normal distribution. This pattern indicates that most average temperatures tend to cluster around a central value, while fewer observations are found at the lower and higher extremes. Such a shape suggests a consistent range of temperatures, with the majority falling within a moderate range, and only a small number of exceptionally high or low temperatures.
+
+The peak of the histogram is observed between 8°C and 12°C, highlighting that these temperature ranges are the most frequently recorded throughout the year. This indicates that Colchester commonly experiences mild to moderately cool temperatures, while significantly warmer or colder temperatures occur less frequently.
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+# Plot the histogram for temperature distribution
+ggplot(temp_data, aes(x = TemperatureCAvg)) +
+  geom_histogram(
+    bins = 30, 
+    color = "black", 
+    fill = "skyblue", 
+    alpha = 0.7
+  ) +
+  labs(
+    title = "Distribution of Average Temperature",
+    x = "Average Temperature (°C)",
+    y = "Frequency"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold")
+  )
+
+```
+
+## Temprature Distribution by crime category
+
+This box plot visualizes the average temperature (in degrees Celsius) during which crimes are reported across different crime categories. Each box represents the interquartile range (IQR), with the median marked by a horizontal line inside the box. The whiskers indicate the range of temperatures outside the IQR, and any outliers are represented as individual points.
+The average temperature spans from approximately 0 to 20 degree celsius across all crime categories, suggesting that crimes occur throughout the year, including colder and warmer months.Most crime categories have a median temperature between 10 degree celsius and 15 degree celsius, indicating that crimes are more frequently reported during mild weather conditions.Some categories, such as robbery, show outliers at lower temperatures (near 0degree celsius). This suggests that robbery incidents may occasionally occur during colder weather.
+Categories like violent crime and bicycle theft show broader temperature ranges, indicating less dependence on specific weather conditions. Public order offenses and shoplifting have narrower distributions, suggesting stronger ties to specific seasonal patterns or environmental factors.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Check for missing values in critical columns
+sum(is.na(merged_data$category))
+sum(is.na(merged_data$TemperatureCAvg))
+
+# Remove rows with missing data in relevant columns
+merged_data_clean <- merged_data[!is.na(merged_data$category) & !is.na(merged_data$TemperatureCAvg), ]
+
+sum(is.na(merged_data_clean))
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+g <- ggplot(merged_data, aes(x = category, y = TemperatureCAvg, fill = category)) +
+  geom_boxplot() +
+  labs(title = "Temperature Distribution by Crime Category", x = "Crime Category", y = "Temperature (Avg)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+# Remove the legend
+g <- g + guides(fill = FALSE)
+
+# Convert to interactive plot
+ggplotly(g, height = 400, width = 800)
+
+```
+
+## Impact of Wind Conditions on Monthly Crime Rates
+
+The provided bar chart visualizes the relationship between monthly crime counts and day types (windy vs. non-windy) based on a threshold of 30 km/h to classify whether a day is windy or not. X-Axis (Month) represents the months of the year from January to December. and Y-Axis (Crime Count) indicates the total number of crimes recorded per month. 
+Non-Windy Days (Blue Bars)are days with wind speeds below the threshold of 30 km/h and Windy Days (Orange Bars) are days with wind speeds equal to or exceeding 30 km/h.
+
+Crime counts are relatively consistent across most months, with slight variations. The highest crime counts are observed in July, while April has slightly lower crime counts compared to other months.Windy days contribute significantly fewer crimes compared to non-windy days across all months.The orange bars (windy day crimes) are consistently much smaller than the blue bars, indicating that windy conditions may correlate with reduced criminal activity.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Classify windy and non-windy days
+threshold <- 30 # threshold to differentiate windy and non windy day
+merged_data <- merged_data %>%
+  mutate(windy_day = ifelse(WindkmhInt > threshold, "Windy", "Non-Windy"))
+
+# Aggregate total crime count by month and windy day status
+agg_windy <- merged_data %>%
+  group_by(month, windy_day) %>%
+  summarise(crime_count = n(), .groups = 'drop')
+
+# Convert month numbers to month names
+agg_windy$month <- factor(agg_windy$month, levels = 1:12, labels = month.name)
+
+# Create a static ggplot object 
+p <- ggplot(agg_windy, aes(x = month, y = crime_count, fill = windy_day, text = paste("Count:", crime_count))) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") +
+  scale_fill_manual(values = c("Windy" = "#FF5733", "Non-Windy" = "#3498DB")) +
+  labs(
+    title = "Monthly Total Crime Count on Windy vs. Non-Windy Days",
+    x = "Month",
+    y = "Crime Count",
+    fill = "Day Type"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Convert ggplot to an interactive plotly object
+interactive_plot <- ggplotly(p, tooltip = "text")
+
+# Display the interactive plot
+interactive_plot
+
+```
+
+## Crime Density by Atmospheric Pressure and Wind Intensity
+
+This chart explores how environmental factors like wind gusts and atmospheric pressure might correlate with crime density. The X-axis represents wind gust speed in kilometers per hour (km/h). The Y-axis represents atmospheric pressure in hecto pascals (hPa).
+The color gradient (from dark purple to yellow) represents the density of crimes occurring under specific combinations of wind gust and atmospheric pressure. dark Purple indicates lower density and Yellow indicates higher density.The contour lines group areas of similar crime density.
+
+Crime occurrences are scattered across various wind and pressure conditions, but the majority are concentrated within the central region. The highest crime density (yellow region) occurs at wind gust speeds of approximately 10–15 km/h and atmospheric pressure around 1010–1020 hPa. This suggests that crimes are more likely to occur under moderate wind conditions and slightly higher pressure levels. At extreme wind gust speeds (above 30 km/h) or very low/high atmospheric pressures (below 980 hPa or above 1035 hPa), crime density is significantly lower (dark purple regions).
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+ ggplot(merged_data, aes(x = WindkmhInt, y= PresslevHp)) +
+  stat_density_2d(aes(fill = ..level..), geom = "polygon") +
+  scale_fill_viridis_c() +
+  labs(title = "Crime Density by Atmospheric Pressure and Wind Intensity")
+
+```
+
+## Crime Patterns by Wind Direction
+
+The polar bar chart illustrates the relationship between crime counts and wind direction throughout the year. The chart is structured as a 360-degree circular graph, divided into 16 distinct wind direction categories, each representing a specific compass point, such as North (N), Northeast (NE), East (E), Southeast (SE), and so forth. This segmentation enables a comprehensive analysis of how wind direction may correlate with criminal activity.
+
+Each radial segment within the chart corresponds to a specific wind direction, forming a complete circle. The height of each bar indicates the number of crimes associated with that particular direction, while the color of the bar reflects the month in which the crimes occurred. This visual representation allows for an integrated view of both spatial (directional) and temporal (monthly) crime patterns.
+
+The analysis reveals that the highest crime counts are predominantly associated with the wind directions West-Southwest (WSW), Southwest (SW) and West (W). These directions stand out with significantly taller bars compared to others, indicating a higher frequency of criminal incidents. In contrast, wind directions such as East-Southeast (ESE) and North-Northeast (NNE) display noticeably lower crime counts, suggesting that winds coming from these directions are less frequently associated with crime occurrences. This pattern hints at a potential relationship where westerly winds may correlate with increased criminal activity, while easterly winds correspond to a decrease.
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Aggregate total crime count by month and wind direction
+agg_wind_dir <- merged_data %>%
+  group_by(month, WindkmhDir) %>%
+  summarise(crime_count = n(), .groups = 'drop')
+
+# Convert month numbers to month names
+agg_wind_dir$month <- factor(agg_wind_dir$month, levels = 1:12, labels = month.name)
+
+# Polar Bar Chart
+ggplot(agg_wind_dir, aes(x = WindkmhDir, y = crime_count, fill = month)) +
+  geom_bar(stat = "identity") +
+  coord_polar(start = 0) +
+  labs(
+    title = "Polar Bar Chart of Crime Count by Wind Direction",
+    x = "Wind Direction",
+    y = "Crime Count",
+    fill = "Month"
+  ) +
+  theme_minimal()
+
+```
+
+## Map
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+leaflet(Crime_data) %>%
+  addTiles() %>%
+  addCircleMarkers(lng = ~long, lat = ~lat, popup = ~category)
+
+```
+
+
+
+
